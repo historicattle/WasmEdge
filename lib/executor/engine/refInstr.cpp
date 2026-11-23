@@ -91,7 +91,8 @@ Expect<void> Executor::runRefIsNullOp(ValVariant &Val) const noexcept {
 Expect<void> Executor::runRefFuncOp(Runtime::StackManager &StackMgr,
                                     uint32_t Idx) const noexcept {
   const auto *FuncInst = getFuncInstByIdx(StackMgr.getModule(), Idx);
-  StackMgr.push(RefVariant(FuncInst->getDefType(), FuncInst));
+  StackMgr.push(
+      RefVariant(ValType(TypeCode::Ref, TypeCode::FuncRef), FuncInst));
   return {};
 }
 
@@ -110,8 +111,6 @@ Executor::runRefAsNonNullOp(RefVariant &Ref,
   if (Ref.isNull()) {
     return Unexpect(logError(ErrCode::Value::CastNullToNonNull, Instr));
   }
-  ValType Type = Ref.getType();
-  Ref.setType(Type.toNonNullableRef());
   return {};
 }
 
@@ -366,27 +365,20 @@ Executor::runRefTestOp(const Runtime::Instance::ModuleInstance *ModInst,
 Expect<void> Executor::runRefConvOp(RefVariant &Ref,
                                     TypeCode TCode) const noexcept {
   if (TCode == TypeCode::AnyRef) {
-    // Internalize.
+    // Internalize: unwrap the reference, or take a host one as an `any`.
     if (Ref.isNull()) {
       Ref = RefVariant(ValType(TypeCode::RefNull, TypeCode::NullRef));
+    } else if (Ref.isExternalized()) {
+      Ref.setExternalized(false);
     } else {
-      ValType VT = Ref.getType();
-      VT.setInternalized();
-      if (VT.isExternRefType()) {
-        VT = ValType(TypeCode::Ref, TypeCode::AnyRef);
-      }
-      Ref.setType(VT);
+      Ref.setType(ValType(TypeCode::Ref, TypeCode::AnyRef));
     }
   } else {
-    // Externalize.
+    // Externalize: wrap the reference, which keeps its own type inside.
     if (Ref.isNull()) {
       Ref = RefVariant(ValType(TypeCode::RefNull, TypeCode::NullExternRef));
     } else {
-      // Use the externalize flag because the value type information should be
-      // reserved when a reference being externalized and internalized.
-      ValType VT = Ref.getType();
-      VT.setExternalized();
-      Ref.setType(VT);
+      Ref.setExternalized(true);
     }
   }
   return {};

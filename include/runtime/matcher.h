@@ -34,24 +34,30 @@ namespace Runtime {
 /// Runtime match helper class.
 class Matcher {
 public:
-  /// Match a reference to a value type of a module instance.
+  /// Match a reference to a value type of a module instance, if any.
   static bool matchRef(const Instance::ModuleInstance *ModInst,
                        const ValType &Exp, const RefVariant &Ref) noexcept {
-    // Match the own type of the referenced instance.
-    auto VT = Ref.getType();
-    Span<const AST::SubType *const> GotTypeList = ModInst->getTypeList();
+    // The null reference has the bottom type.
+    if (Ref.isNull()) {
+      return AST::TypeMatcher::matchBottomRef(Exp, true);
+    }
+    // A non-null reference matches by the own type of the referenced instance.
+    auto VT = Ref.getType().getNonNullableRef();
+    // An expected type out of any module is abstract and needs no type list.
+    Span<const AST::SubType *const> ExpTypeList;
+    if (ModInst) {
+      ExpTypeList = ModInst->getTypeList();
+    }
+    Span<const AST::SubType *const> GotTypeList = ExpTypeList;
     const AST::SubType *HostType = nullptr;
-    if (VT.isExternalized()) {
-      VT = ValType(VT.isNullableRefType() ? TypeCode::RefNull : TypeCode::Ref,
-                   TypeCode::ExternRef);
+    if (Ref.isExternalized()) {
+      VT = ValType(TypeCode::Ref, TypeCode::ExternRef);
     } else if (!VT.isAbsHeapType()) {
-      // Null references have abstract heap types.
       const auto *Inst = Ref.getPtr<Instance::CompositeBase>();
-      assuming(Inst);
       if (Inst->getModule()) {
         GotTypeList = Inst->getModule()->getTypeList();
       }
-    } else if (VT.getHeapTypeCode() == TypeCode::FuncRef && !Ref.isNull()) {
+    } else if (VT.getHeapTypeCode() == TypeCode::FuncRef) {
       const auto *FuncInst = retrieveFuncRef(Ref);
       if (FuncInst->getModule()) {
         GotTypeList = FuncInst->getModule()->getTypeList();
@@ -63,8 +69,7 @@ public:
         VT = ValType(TypeCode::Ref, 0U);
       }
     }
-    return AST::TypeMatcher::matchType(ModInst->getTypeList(), Exp, GotTypeList,
-                                       VT);
+    return AST::TypeMatcher::matchType(ExpTypeList, Exp, GotTypeList, VT);
   }
 
   /// Match a function instance of a module instance to a defined type.

@@ -451,8 +451,8 @@ FunctionCompiler::compileRefOp(const AST::Instruction &Instr) noexcept {
         LLVM::BasicBlock::create(LLContext, F.Fn, "any_conv_extern.null");
     auto NotNullBB =
         LLVM::BasicBlock::create(LLContext, F.Fn, "any_conv_extern.not_null");
-    auto IsExtrefBB =
-        LLVM::BasicBlock::create(LLContext, F.Fn, "any_conv_extern.is_extref");
+    auto IsHostBB =
+        LLVM::BasicBlock::create(LLContext, F.Fn, "any_conv_extern.is_host");
     auto EndBB =
         LLVM::BasicBlock::create(LLContext, F.Fn, "any_conv_extern.end");
     auto CondIsNull = Builder.createICmpEQ(PtrVal, LLContext.getInt64(0));
@@ -465,22 +465,19 @@ FunctionCompiler::compileRefOp(const AST::Instruction &Instr) noexcept {
         LLVM::Value::getConstVector8(LLContext, RawRef), Context.Int64x2Ty);
     Builder.createBr(EndBB);
 
+    // Unwrap the externalized reference, or take a host one as an `any`.
     Builder.positionAtEnd(NotNullBB);
-    auto Ret2 =
-        Builder.createBitCast(Builder.createInsertElement(
-                                  Builder.createBitCast(Ref, Context.Int8x16Ty),
-                                  LLContext.getInt8(0), LLContext.getInt64(1)),
-                              Context.Int64x2Ty);
-    auto HType = Builder.createExtractElement(
-        Builder.createBitCast(Ret2, Context.Int8x16Ty), LLContext.getInt64(3));
-    auto CondIsExtref = Builder.createOr(
-        Builder.createICmpEQ(HType, LLContext.getInt8(static_cast<uint8_t>(
-                                        TypeCode::ExternRef))),
-        Builder.createICmpEQ(HType, LLContext.getInt8(static_cast<uint8_t>(
-                                        TypeCode::NullExternRef))));
-    Builder.createCondBr(CondIsExtref, IsExtrefBB, EndBB);
+    auto RawBytes = Builder.createBitCast(Ref, Context.Int8x16Ty);
+    auto Ret2 = Builder.createBitCast(
+        Builder.createInsertElement(RawBytes, LLContext.getInt8(0),
+                                    LLContext.getInt64(1)),
+        Context.Int64x2Ty);
+    auto CondIsHost = Builder.createICmpEQ(
+        Builder.createExtractElement(RawBytes, LLContext.getInt64(1)),
+        LLContext.getInt8(0));
+    Builder.createCondBr(CondIsHost, IsHostBB, EndBB);
 
-    Builder.positionAtEnd(IsExtrefBB);
+    Builder.positionAtEnd(IsHostBB);
     VT = ValType(TypeCode::Ref, TypeCode::AnyRef);
     std::copy_n(VT.getRawData().cbegin(), 8, RawRef.begin());
     auto Ret3 = Builder.createInsertElement(
@@ -493,7 +490,7 @@ FunctionCompiler::compileRefOp(const AST::Instruction &Instr) noexcept {
     auto Ret = Builder.createPHI(Context.Int64x2Ty);
     Ret.addIncoming(Ret1, IsNullBB);
     Ret.addIncoming(Ret2, NotNullBB);
-    Ret.addIncoming(Ret3, IsExtrefBB);
+    Ret.addIncoming(Ret3, IsHostBB);
     stackPush(Ret);
     break;
   }
